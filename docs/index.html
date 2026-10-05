@@ -10,7 +10,6 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;800&family=Rajdhani:wght@400;500;600&display=swap" rel="stylesheet">
-<script src="https://unpkg.com/globe.gl@2.46.2/dist/globe.gl.min.js"></script>
 <style>
   :root {
     --bg: #02060b;
@@ -214,7 +213,7 @@
 <div id="boot">
   <div class="reactor"><div class="ring r1"></div><div class="ring r2"></div><div class="ring r3"></div><div class="core"></div></div>
   <div id="bootLog"></div>
-  <div id="bootGo">TAP TO WAKE JARVIS</div>
+  <div id="bootGo">TAP ANYWHERE TO WAKE JARVIS</div>
 </div>
 
 <div class="hud">
@@ -529,6 +528,7 @@ if (navigator.getBattery) {
 let globe = null;
 function initGlobe() {
   const el = $("globe");
+  if (globe) return;
   if (typeof Globe !== "function") { el.innerHTML = "<div style='padding:40px;color:var(--muted)'>Globe module offline.</div>"; return; }
   globe = Globe()(el)
     .backgroundColor("rgba(0,0,0,0)")
@@ -719,25 +719,57 @@ document.addEventListener("keydown", (e) => { // spacebar to talk when not typin
 });
 
 /* ====================== BOOT ====================== */
-const BOOT = ["Initializing core systems", "Calibrating atmospherics", "Acquiring orbital lock", "Scanning regional airspace", "Retrieving daily intel", "Voice synthesis online"];
-async function boot() {
+// The globe library is big, so it loads in the background instead of holding up the page.
+const globeLib = new Promise((res) => {
+  const sc = document.createElement("script");
+  sc.src = "https://unpkg.com/globe.gl@2.46.2/dist/globe.gl.min.js";
+  sc.onload = sc.onerror = res;
+  document.head.appendChild(sc);
+});
+globeLib.then(initGlobe);
+
+// Each boot line turns OK when its feed actually answers (or OFFLINE if it doesn't).
+const loading = {
+  globe: globeLib,
+  wx: loadWeather(),
+  iss: loadISS().then(loadISSOver),
+  air: loadFlights(),
+  fact: loadFact(),
+  news: loadNews(),
+};
+const BOOT = [
+  ["Initializing core systems", "globe"], ["Calibrating atmospherics", "wx"], ["Acquiring orbital lock", "iss"],
+  ["Scanning regional airspace", "air"], ["Retrieving daily intel", "fact"], ["Connecting newswire", "news"],
+];
+const allLoaded = Promise.allSettled(Object.values(loading));
+const timeout = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function boot() {
   const log = $("bootLog");
-  const loads = Promise.allSettled([loadWeather(), loadISS().then(loadISSOver), loadFlights(), loadFact(), loadNews()]);
-  for (const line of BOOT) {
-    log.innerHTML += `<div>${line.toUpperCase()}<span class="ok">OK</span></div>`;
-    await new Promise((r) => setTimeout(r, 260));
-  }
-  await Promise.race([loads, new Promise((r) => setTimeout(r, 6000))]);
-  initGlobe();
+  log.innerHTML = BOOT.map(([line, k]) => `<div>${line.toUpperCase()}<span class="ok" id="bl-${k}" style="color:var(--muted)">…</span></div>`).join("");
+  BOOT.forEach(([, k]) => loading[k].then(() => {
+    const el = $(`bl-${k}`);
+    const bad = k === "globe" ? typeof Globe !== "function" : protoState[k] === "bad";
+    el.textContent = k === "air" && !IS_LOCAL ? "MAC ONLY" : bad ? "OFFLINE" : "OK";
+    el.style.color = bad ? "var(--red)" : k === "air" && !IS_LOCAL ? "var(--muted)" : "";
+  }));
   if (IS_LOCAL) { // Mac app: no tap needed, macOS does the talking
-    setTimeout(wake, 400);
+    Promise.race([allLoaded, timeout(5000)]).then(() => setTimeout(wake, 400));
   } else {
-    $("bootGo").style.opacity = 1;
+    $("bootGo").style.opacity = 1; // tap works right away, no waiting on the feeds
     $("boot").addEventListener("click", wake, { once: true });
   }
 }
-function wake() {
+let woke = false;
+async function wake() {
+  if (woke) return;
+  woke = true;
   $("boot").classList.add("gone");
+  // Phones only allow talking right after a tap, so say something now and brief once the data is in.
+  const ready = await Promise.race([allLoaded.then(() => true), timeout(150).then(() => false)]);
+  if (ready) return speak(briefing());
+  speak(`Waking up, ${CONFIG.title}. One moment.`);
+  await Promise.all([Promise.race([allLoaded, timeout(5000)]), timeout(2200)]); // let the first line finish
   speak(briefing());
 }
 boot();
