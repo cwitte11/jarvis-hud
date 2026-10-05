@@ -349,7 +349,14 @@ function renderProtocols() {
   }).join("");
 }
 const protoState = {};
-function setProto(k, s) { protoState[k] = s; renderProtocols(); }
+function setProto(k, s, err) {
+  const was = protoState[k];
+  protoState[k] = s; renderProtocols();
+  // Mac app: write feed failures and recoveries to logs/app.log so problems are easy to track down
+  if (IS_LOCAL && s !== was && (s === "bad" || was === "bad")) {
+    fetch("/api/log", { method: "POST", body: `${PROTOCOLS[k] || k}: ${s === "bad" ? "OFFLINE" : "back online"}${err ? " (" + (err.name === "AbortError" ? "timed out" : err.message || err) + ")" : ""}` }).catch(() => {});
+  }
+}
 renderProtocols();
 
 async function getJSON(url, ms = 9000) {
@@ -407,7 +414,7 @@ async function loadWeather() {
     $("sunrise").textContent = timeOnly(dly.sunrise[0]);
     $("sunset").textContent = timeOnly(dly.sunset[0]);
     setProto("wx", "ok");
-  } catch (e) { setProto("wx", "bad"); $("wxDesc").textContent = "Feed offline"; }
+  } catch (e) { setProto("wx", "bad", e); $("wxDesc").textContent = "Feed offline"; }
 }
 const compass = (deg) => ["N", "NE", "E", "SE", "S", "SW", "W", "NW"][Math.round(deg / 45) % 8];
 
@@ -433,7 +440,7 @@ async function loadISS() {
     $("issCorner").textContent = `ISS · ${fmt(s.velocity)} MPH`;
     setProto("iss", "ok");
     updateGlobe();
-  } catch (e) { if (!state.iss) setProto("iss", "bad"); }
+  } catch (e) { if (!state.iss) setProto("iss", "bad", e); }
 }
 async function loadISSOver() {
   if (!state.iss) return;
@@ -465,9 +472,10 @@ async function loadFlights() {
     return;
   }
   const urls = [`/api/flights?${q}`];
+  let lastErr = null;
   for (const u of urls) {
     try {
-      const d = await getJSON(u, 12000);
+      const d = await getJSON(u, 20000);
       state.flights = (d.states || []).filter((s) => !s[8] && s[5] != null && s[6] != null).map((s) => ({
         call: (s[1] || "").trim() || s[0].toUpperCase(), country: s[2], lon: s[5], lat: s[6],
         altFt: s[7] ? s[7] * 3.281 : 0, mph: s[9] ? s[9] * 2.237 : 0,
@@ -480,9 +488,9 @@ async function loadFlights() {
       setProto("air", "ok");
       updateGlobe();
       return;
-    } catch (e) { /* try next */ }
+    } catch (e) { lastErr = e; }
   }
-  if (!state.flights.length) { setProto("air", "bad"); $("airCount").textContent = "Offline"; }
+  if (!state.flights.length) { setProto("air", "bad", lastErr); $("airCount").textContent = "Offline"; }
 }
 
 /* ====================== FACT + ON THIS DAY ====================== */
@@ -492,7 +500,7 @@ async function loadFact() {
     state.fact = f.text.replace(/`/g, "'");
     $("fact").textContent = state.fact; $("fact").classList.remove("muted");
     setProto("fact", "ok");
-  } catch (e) { setProto("fact", "bad"); $("fact").textContent = "Intel feed offline."; }
+  } catch (e) { setProto("fact", "bad", e); $("fact").textContent = "Intel feed offline."; }
   try {
     const d = new Date(), mm = String(d.getMonth() + 1).padStart(2, "0"), dd = String(d.getDate()).padStart(2, "0");
     const o = await getJSON(`https://en.wikipedia.org/api/rest_v1/feed/onthisday/selected/${mm}/${dd}`)
@@ -512,7 +520,7 @@ async function loadNews() {
     $("news").innerHTML = state.news.map((n) =>
       `<li><a href="${n.url || "https://news.ycombinator.com/item?id=" + n.id}" target="_blank" rel="noopener">${escapeHTML(n.title)}</a></li>`).join("");
     setProto("news", "ok");
-  } catch (e) { setProto("news", "bad"); $("news").innerHTML = "<li class='muted'>Newswire offline.</li>"; }
+  } catch (e) { setProto("news", "bad", e); $("news").innerHTML = "<li class='muted'>Newswire offline.</li>"; }
 }
 const escapeHTML = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
@@ -780,6 +788,12 @@ setInterval(loadISSOver, 60000);
 setInterval(loadFlights, 5 * 60000); // OpenSky's free tier is 400 calls a day, this uses about 290
 setInterval(loadWeather, 10 * 60000);
 setInterval(loadNews, 15 * 60000);
+setInterval(() => { // anything offline gets another shot every 30 seconds
+  if (protoState.wx === "bad") loadWeather();
+  if (protoState.fact === "bad") loadFact();
+  if (protoState.news === "bad") loadNews();
+  if (protoState.air === "bad" && IS_LOCAL) loadFlights();
+}, 30000);
 // Mac app: let jarvis.py know the window is still open, so closing it quits Jarvis
 if (IS_LOCAL) {
   const ping = () => fetch("/api/ping").catch(() => {});

@@ -95,6 +95,10 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_POST(self):
         global _bye_at
+        if self.path == "/api/log":
+            n = min(int(self.headers.get("Content-Length", 0)), 500)
+            log("HUD: " + self.rfile.read(n).decode("utf-8", "ignore"))
+            return self._json({"ok": True})
         if self.path == "/api/bye":
             _bye_at = time.time()
             log("HUD window closing")
@@ -134,6 +138,7 @@ class Handler(SimpleHTTPRequestHandler):
                     data = r.read()
                 _flight_cache[q] = (time.time(), data)
             except Exception as e:
+                log(f"Flights: OpenSky request failed ({e})")
                 if hit:
                     data = hit[1]
                 else:
@@ -169,7 +174,7 @@ def watch_window(server, started):
         time.sleep(2)
         now = time.time()
         reason = None
-        if _bye_at and now - _bye_at > 6:
+        if _bye_at and now - _bye_at > 15:  # longer than the 10s check-in, so other windows get a say
             if _last_ping and _last_ping > _bye_at:
                 _bye_at = None  # it was just a reload
                 continue
