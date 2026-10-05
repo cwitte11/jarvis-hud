@@ -621,7 +621,12 @@ function timeLine() { return `It's ${new Date().toLocaleTimeString("en-US", { ho
 function weatherLine() {
   if (!state.wx) return "I can't reach the weather feed at the moment.";
   const c = state.wx.current, d = state.wx.daily;
-  let s = `It's ${Math.round(c.temperature_2m)} degrees and ${(WX[c.weather_code] || "unusual").toLowerCase()} in ${CONFIG.city}, heading for a high of ${Math.round(d.temperature_2m_max[0])}.`;
+  const now = Math.round(c.temperature_2m), hi = Math.round(d.temperature_2m_max[0]);
+  let s = `Outside it's ${now} degrees and ${(WX[c.weather_code] || "unusual").toLowerCase()} in ${CONFIG.city}`;
+  const afternoon = new Date().getHours() >= 15;
+  if (!afternoon && hi - now >= 2) s += `, heading for a high of ${hi}.`;
+  else if (hi - now >= 3) s += `, down from a high of ${hi}.`;
+  else s += ", about as warm as it gets today.";
   const rain = d.precipitation_probability_max[0];
   if (rain >= 50) s += ` ${rain} percent chance of rain, so I'd bring a jacket.`;
   if (c.temperature_2m < 32) s += " Dress warm, it's below freezing.";
@@ -743,6 +748,8 @@ setInterval(loadISSOver, 60000);
 setInterval(loadFlights, 5 * 60000); // OpenSky's free tier is 400 calls a day, this uses about 290
 setInterval(loadWeather, 10 * 60000);
 setInterval(loadNews, 15 * 60000);
+// Mac app: let jarvis.py know the window is still open, so closing it quits Jarvis
+if (IS_LOCAL) { const ping = () => fetch("/api/ping").catch(() => {}); ping(); setInterval(ping, 10000); }
 </script>
 </body>
 </html>

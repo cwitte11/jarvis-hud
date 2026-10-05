@@ -6,7 +6,7 @@ It's the fun side of my Jarvis project. Not a productivity tool. Just cool.
 
 ## What it does
 
-- **Global overwatch.** A spinning night-side Earth that shows home, the International Space Station live with its orbit trail, and every plane in the air around Minneapolis (planes only show up when you run it from the Mac, since the flight data blocks browsers).
+- **Global overwatch.** A spinning night-side Earth that shows home, the International Space Station live with its orbit trail, and every plane in the air around Minneapolis.
 - **Briefing.** On wake Jarvis says good morning, the time, the weather, where the ISS is, and the fact of the day.
 - **Talk to it.** Tap the arc reactor (or hit space) and ask for things. Or type them.
 - **Panels.** Clock with sunrise and sunset, weather, ISS stats, nearby aircraft, fact of the day, on this day in history, top tech headlines, and a protocols board showing which feeds are live.
@@ -27,6 +27,10 @@ python3 jarvis.py --say "Good evening, sir."
 ```
 
 No installs. Just Python 3, which every Mac already has.
+
+**As a real Mac app.** `python3 jarvis.py --make-app` puts Jarvis.app (arc reactor icon and all) in your Applications folder. Open it from Spotlight or Launchpad, or keep it in the Dock. Close the HUD window and Jarvis says goodbye and quits on his own.
+
+**As a real Mac app.** `python3 jarvis.py --make-app` puts Jarvis.app (arc reactor icon and all) in your Applications folder. Open it from Spotlight or Launchpad, or keep it in the Dock. Close the HUD window and Jarvis says goodbye and quits on his own.
 
 ## Commands
 

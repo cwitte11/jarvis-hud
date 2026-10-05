@@ -9,6 +9,7 @@ and can start itself every time you log in.
   python3 jarvis.py --install    start it automatically at login
   python3 jarvis.py --uninstall  stop starting at login
   python3 jarvis.py --say "Hello, sir."   just talk
+  python3 jarvis.py --make-app   put a Jarvis app in your Applications folder
 
 No pip installs needed. Standard library only.
 """
@@ -17,6 +18,7 @@ import json
 import os
 import plistlib
 import shutil
+import signal
 import subprocess
 import sys
 import threading
@@ -37,6 +39,7 @@ PREFERRED_VOICES = ["Daniel", "Arthur", "Oliver", "Jamie (Premium)", "Jamie"]
 _say_proc = None
 _say_lock = threading.Lock()
 _flight_cache = {}  # query -> (time, bytes)
+_last_ping = None    # last time the HUD window checked in (app mode)
 
 
 # ---------------------------------------------------------------- voice
@@ -96,6 +99,10 @@ class Handler(SimpleHTTPRequestHandler):
         self._json({"error": "not found"}, 404)
 
     def do_GET(self):
+        global _last_ping
+        if self.path == "/api/ping":
+            _last_ping = time.time()
+            return self._json({"ok": True})
         if self.path.startswith("/api/flights"):
             return self.flights()
         return super().do_GET()
@@ -140,7 +147,19 @@ def open_window(url):
         webbrowser.open(url)
 
 
-def run(open_browser=True):
+def watch_window(server, started):
+    """App mode: when the HUD window is closed, Jarvis shuts down like a normal app."""
+    while True:
+        time.sleep(5)
+        now = time.time()
+        gone = (_last_ping and now - _last_ping > 40) or (not _last_ping and now - started > 120)
+        if gone:
+            say("Powering down. Goodbye.")
+            threading.Thread(target=server.shutdown, daemon=True).start()
+            return
+
+
+def run(open_browser=True, app_mode=False):
     try:
         server = ThreadingHTTPServer(("127.0.0.1", PORT), partial(Handler, directory=str(WEB)))
     except OSError:
@@ -152,11 +171,56 @@ def run(open_browser=True):
     print(f"J.A.R.V.I.S. online at {url}  (voice: {VOICE or 'default'})  Ctrl+C to shut down.")
     if open_browser:
         threading.Timer(0.6, open_window, args=[url]).start()
+    if app_mode:
+        threading.Thread(target=watch_window, args=(server, time.time()), daemon=True).start()
+
+    def stop(*_):  # Cmd+Q on the app, or logout
+        say("Powering down. Goodbye.")
+        threading.Thread(target=server.shutdown, daemon=True).start()
+    signal.signal(signal.SIGTERM, stop)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         say("Powering down. Goodbye.")
-        print("\nJarvis offline.")
+    print("\nJarvis offline.")
+
+
+# ---------------------------------------------------------------- Mac app
+def make_app(dest=None):
+    """Build Jarvis.app: a real app with an icon, for the Dock, Launchpad and Spotlight."""
+    if sys.platform != "darwin":
+        sys.exit("--make-app only works on a Mac.")
+    dest = Path(dest) if dest else Path.home() / "Applications"
+    dest.mkdir(parents=True, exist_ok=True)
+    app = dest / "Jarvis.app"
+    if app.exists():
+        shutil.rmtree(app)
+    macos, res = app / "Contents/MacOS", app / "Contents/Resources"
+    macos.mkdir(parents=True)
+    res.mkdir(parents=True)
+    shutil.copy(HERE / "assets/Jarvis.icns", res / "Jarvis.icns")
+    launcher = macos / "Jarvis"
+    launcher.write_text(
+        "#!/bin/bash\n"
+        'export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"\n'
+        f'exec python3 "{HERE / "jarvis.py"}" --app\n'
+    )
+    launcher.chmod(0o755)
+    with open(app / "Contents/Info.plist", "wb") as f:
+        plistlib.dump({
+            "CFBundleName": "Jarvis",
+            "CFBundleDisplayName": "Jarvis",
+            "CFBundleIdentifier": "com.jarvis.hud.app",
+            "CFBundleVersion": "3.0",
+            "CFBundleShortVersionString": "3.0",
+            "CFBundleExecutable": "Jarvis",
+            "CFBundleIconFile": "Jarvis",
+            "CFBundlePackageType": "APPL",
+            "LSMinimumSystemVersion": "11.0",
+            "NSHighResolutionCapable": True,
+        }, f)
+    subprocess.run(["touch", str(app)])  # nudge Finder to pick up the icon
+    print(f"Done. Jarvis.app is in {dest}. Open it from Launchpad or Spotlight, or drag it to your Dock.")
 
 
 # ---------------------------------------------------------------- login item
@@ -196,14 +260,18 @@ if __name__ == "__main__":
     p.add_argument("--uninstall", action="store_true", help="stop starting at login")
     p.add_argument("--no-window", action="store_true", help="run the server without opening a window")
     p.add_argument("--say", metavar="TEXT", help="just say something and exit")
+    p.add_argument("--make-app", action="store_true", help="put Jarvis.app in ~/Applications")
+    p.add_argument("--app", action="store_true", help=argparse.SUPPRESS)  # used by Jarvis.app
     a = p.parse_args()
     if a.install:
         install()
     elif a.uninstall:
         uninstall()
+    elif a.make_app:
+        make_app()
     elif a.say:
         say(a.say)
         if _say_proc:
             _say_proc.wait()
     else:
-        run(open_browser=not a.no_window)
+        run(open_browser=not a.no_window, app_mode=a.app)
