@@ -40,6 +40,11 @@ _say_proc = None
 _say_lock = threading.Lock()
 _flight_cache = {}  # query -> (time, bytes)
 _last_ping = None    # last time the HUD window checked in (app mode)
+_bye_at = None       # when the HUD window said it was closing
+
+
+def log(msg):
+    print(time.strftime("%H:%M:%S"), msg, flush=True)
 
 
 # ---------------------------------------------------------------- voice
@@ -89,6 +94,11 @@ class Handler(SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_POST(self):
+        global _bye_at
+        if self.path == "/api/bye":
+            _bye_at = time.time()
+            log("HUD window closing")
+            return self._json({"ok": True})
         if self.path == "/api/say":
             n = min(int(self.headers.get("Content-Length", 0)), 4000)
             text = self.rfile.read(n).decode("utf-8", "ignore").strip()
@@ -148,12 +158,28 @@ def open_window(url):
 
 
 def watch_window(server, started):
-    """App mode: when the HUD window is closed, Jarvis shuts down like a normal app."""
+    """App mode: when the HUD window is closed, Jarvis shuts down like a normal app.
+
+    The window says goodbye when it closes. If it comes back within a few seconds
+    (a reload), Jarvis stays up. Background windows get throttled by Chrome, so a
+    quiet window alone never shuts Jarvis down unless it's been silent for 15 minutes.
+    """
+    global _bye_at
     while True:
-        time.sleep(5)
+        time.sleep(2)
         now = time.time()
-        gone = (_last_ping and now - _last_ping > 40) or (not _last_ping and now - started > 120)
-        if gone:
+        reason = None
+        if _bye_at and now - _bye_at > 6:
+            if _last_ping and _last_ping > _bye_at:
+                _bye_at = None  # it was just a reload
+                continue
+            reason = "window closed"
+        elif _last_ping and now - _last_ping > 15 * 60:
+            reason = "no word from the window in 15 minutes"
+        elif not _last_ping and now - started > 5 * 60:
+            reason = "the window never opened"
+        if reason:
+            log(f"Shutting down: {reason}")
             say("Powering down. Goodbye.")
             threading.Thread(target=server.shutdown, daemon=True).start()
             return
@@ -168,13 +194,14 @@ def run(open_browser=True, app_mode=False):
             open_window(f"http://localhost:{PORT}")
         return
     url = f"http://localhost:{PORT}"
-    print(f"J.A.R.V.I.S. online at {url}  (voice: {VOICE or 'default'})  Ctrl+C to shut down.")
+    log(f"J.A.R.V.I.S. online at {url}  (voice: {VOICE or 'default'}, python {sys.version.split()[0]})  Ctrl+C to shut down.")
     if open_browser:
         threading.Timer(0.6, open_window, args=[url]).start()
     if app_mode:
         threading.Thread(target=watch_window, args=(server, time.time()), daemon=True).start()
 
     def stop(*_):  # Cmd+Q on the app, or logout
+        log("Shutting down: quit")
         say("Powering down. Goodbye.")
         threading.Thread(target=server.shutdown, daemon=True).start()
     signal.signal(signal.SIGTERM, stop)
@@ -182,7 +209,7 @@ def run(open_browser=True, app_mode=False):
         server.serve_forever()
     except KeyboardInterrupt:
         say("Powering down. Goodbye.")
-    print("\nJarvis offline.")
+    log("Jarvis offline.")
 
 
 # ---------------------------------------------------------------- Mac app
@@ -203,7 +230,8 @@ def make_app(dest=None):
     launcher.write_text(
         "#!/bin/bash\n"
         'export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"\n'
-        f'exec python3 "{HERE / "jarvis.py"}" --app\n'
+        f'mkdir -p "{HERE / "logs"}"\n'
+        f'exec python3 "{HERE / "jarvis.py"}" --app >> "{HERE / "logs/app.log"}" 2>&1\n'
     )
     launcher.chmod(0o755)
     with open(app / "Contents/Info.plist", "wb") as f:

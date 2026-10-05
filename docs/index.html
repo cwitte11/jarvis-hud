@@ -781,7 +781,12 @@ setInterval(loadFlights, 5 * 60000); // OpenSky's free tier is 400 calls a day, 
 setInterval(loadWeather, 10 * 60000);
 setInterval(loadNews, 15 * 60000);
 // Mac app: let jarvis.py know the window is still open, so closing it quits Jarvis
-if (IS_LOCAL) { const ping = () => fetch("/api/ping").catch(() => {}); ping(); setInterval(ping, 10000); }
+if (IS_LOCAL) {
+  const ping = () => fetch("/api/ping").catch(() => {});
+  ping(); setInterval(ping, 10000);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) ping(); });
+  addEventListener("pagehide", () => navigator.sendBeacon("/api/bye"));
+}
 </script>
 </body>
 </html>
