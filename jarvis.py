@@ -167,20 +167,27 @@ def watch_window(server, started):
 
     The window says goodbye when it closes. If it comes back within a few seconds
     (a reload), Jarvis stays up. Background windows get throttled by Chrome, so a
-    quiet window alone never shuts Jarvis down unless it's been silent for 15 minutes.
+    quiet window alone never shuts Jarvis down unless it's been silent for 30 minutes
+    while the Mac was awake. Time spent asleep doesn't count.
     """
-    global _bye_at
+    global _bye_at, _last_ping
+    last_tick = time.time()
     while True:
         time.sleep(2)
         now = time.time()
+        if now - last_tick > 30:  # the Mac was asleep: give the window a fresh start
+            log(f"Woke from sleep after {int((now - last_tick) / 60)} min")
+            if _last_ping:
+                _last_ping = now
+        last_tick = now
         reason = None
         if _bye_at and now - _bye_at > 15:  # longer than the 10s check-in, so other windows get a say
             if _last_ping and _last_ping > _bye_at:
                 _bye_at = None  # it was just a reload
                 continue
             reason = "window closed"
-        elif _last_ping and now - _last_ping > 15 * 60:
-            reason = "no word from the window in 15 minutes"
+        elif _last_ping and now - _last_ping > 30 * 60:
+            reason = "no word from the window in 30 minutes"
         elif not _last_ping and now - started > 5 * 60:
             reason = "the window never opened"
         if reason:

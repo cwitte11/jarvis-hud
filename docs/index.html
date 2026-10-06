@@ -796,7 +796,13 @@ setInterval(() => { // anything offline gets another shot every 30 seconds
 }, 30000);
 // Mac app: let jarvis.py know the window is still open, so closing it quits Jarvis
 if (IS_LOCAL) {
-  const ping = () => fetch("/api/ping").catch(() => {});
+  // If Jarvis isn't answering, say so on screen instead of leaving dead panels
+  const ping = () => fetch("/api/ping").then(() => {
+    if (state.serverDown) { state.serverDown = false; $("say").textContent = "Back online."; }
+  }).catch(() => {
+    state.serverDown = true;
+    $("say").textContent = "I've lost my connection to the Mac app. Quit and reopen Jarvis to bring me back.";
+  });
   ping(); setInterval(ping, 10000);
   document.addEventListener("visibilitychange", () => { if (!document.hidden) ping(); });
   addEventListener("pagehide", () => navigator.sendBeacon("/api/bye"));
